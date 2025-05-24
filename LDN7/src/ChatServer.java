@@ -78,6 +78,7 @@ public class ChatServer {
 						finally{			 //v primeru dupliciranega up. imena moramo vedno zapreti socket
 							try{
 								newClientSocket.close();
+								//lesgo
 							}catch(Exception e){}
 						}
 					}
