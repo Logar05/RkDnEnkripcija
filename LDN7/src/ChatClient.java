@@ -11,7 +11,7 @@ import java.time.format.DateTimeFormatter;
 
 import javax.net.ssl.*;
 import java.security.KeyStore;
-import java.io.FileInputStream;
+
 
 public class ChatClient extends Thread
 {
@@ -22,74 +22,57 @@ public class ChatClient extends Thread
 	}
 
 	public ChatClient() throws Exception {
-		Socket socket = null;
-		final String name;
-		DataInputStream in = null;
-		DataOutputStream out = null;
-		final BufferedReader std_in;
+        // 1) Prebereš ime
+        BufferedReader std_in = new BufferedReader(new InputStreamReader(System.in));
+        System.out.print("Vnesi svoje ime: ");
+        String name = std_in.readLine();
 
-		System.out.println("Vnesi svoje ime: ");
-			std_in = new BufferedReader(new InputStreamReader(System.in));
-			name = std_in.readLine();
-			
-		// connect to the chat server
-		try {
-			
-			System.out.println("[system] connecting to chat server ...");
-			socket = new Socket("localhost", serverPort); // create socket connection
-			in = new DataInputStream(socket.getInputStream()); // create input stream for listening for incoming messages
-			out = new DataOutputStream(socket.getOutputStream()); // create output stream for sending messages
-			boolean reg = registracija("register", out, name); // register the client with the server
-			if (!reg) {
-				System.err.println("[system] could not register");
-				System.exit(1);
-			}
-			System.out.println("[system] connected");
-			System.out.println();
+        // 2) TLS CONNECT (vrstice združene, brez dodatnega try)
+        KeyStore serverTs = KeyStore.getInstance("JKS");
+        serverTs.load(new FileInputStream("server.public"), "public".toCharArray());
+        TrustManagerFactory tmf = TrustManagerFactory.getInstance("SunX509");
+        tmf.init(serverTs);
 
-			ChatClientMessageReceiver message_receiver = new ChatClientMessageReceiver(in); // create a separate thread for listening to messages from the chat server
-			message_receiver.start(); // run the new thread
-		} catch (Exception e) {
-			e.printStackTrace(System.err);
-			System.exit(1);
-		}
+        String ksFile = name.toLowerCase() + ".private";
+        String ksPass = name.toLowerCase() + "pwd";
+        KeyStore clientKs = KeyStore.getInstance("PKCS12");
+        clientKs.load(new FileInputStream(ksFile), ksPass.toCharArray());
+        KeyManagerFactory kmf = KeyManagerFactory.getInstance("SunX509");
+        kmf.init(clientKs, ksPass.toCharArray());
 
-		// read from STDIN and send messages to the chat server
-		
-		String userInput;
-		while ((userInput = std_in.readLine()) != null) { // read a line from the console
-			this.sendMessage(userInput, out, name); // send the message to the chat server
-		}
+        SSLContext sslCtx = SSLContext.getInstance("TLSv1.2");
+        sslCtx.init(kmf.getKeyManagers(), tmf.getTrustManagers(), null);
 
-		// cleanup
-		out.close();
-		in.close();
-		std_in.close();
-		socket.close();
-	}
+        SSLSocketFactory sf = sslCtx.getSocketFactory();
+        SSLSocket sslSocket = (SSLSocket) sf.createSocket("localhost", serverPort);
+        sslSocket.setEnabledProtocols(new String[]{ "TLSv1.2" });
+        sslSocket.setEnabledCipherSuites(new String[]{ "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256" });
+        sslSocket.startHandshake();
 
-	private boolean registracija(String registerJSON, DataOutputStream out, String name) {
-		try {
-			JSONObject register = new JSONObject();
-			register.put("type", "register");
-			register.put("sender", name);
-			register.put("targetUser", "server");
-			register.put("content", "registerRequest");
-			register.put("cas", ZonedDateTime.now(ZoneId.of("Europe/Ljubljana")).format(DateTimeFormatter.ISO_OFFSET_DATE_TIME));
-			String finalMessage = register.toJSONString();
-			out.writeUTF(finalMessage); 
-			out.flush();
-			
-			System.out.println("[system] connected");
-			System.out.println("[system] Pozdravljeni v pogovoru " + name + "!");
-			
-			return true;
-		} catch (IOException e) {
-			System.err.println("[system] could not register");
-			e.printStackTrace(System.err);
-			return false;
-		}
-	}
+        System.out.println("[system] connected via TLS as " + name);
+        System.out.println();
+
+        // 3) Pripravi tokove **tukaj** – zdaj imamo sslSocket
+        DataInputStream in = new DataInputStream(sslSocket.getInputStream());
+        DataOutputStream out = new DataOutputStream(sslSocket.getOutputStream());
+
+        // 4) Zaženi receiver in poslji sporočila
+        ChatClientMessageReceiver message_receiver = new ChatClientMessageReceiver(in);
+        message_receiver.start();
+
+        String userInput;
+        while ((userInput = std_in.readLine()) != null) {
+            this.sendMessage(userInput, out, name);
+        }
+
+        // 5) cleanup
+        out.close();
+        in.close();
+        std_in.close();
+        sslSocket.close();
+    }
+
+
 
 	private void sendMessage(String message, DataOutputStream out, String name) {
 			try {

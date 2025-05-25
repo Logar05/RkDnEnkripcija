@@ -1,351 +1,291 @@
 import java.io.*;
-import java.net.*;
-import java.util.*;
-import org.json.simple.JSONObject;
-import org.json.simple.parser.JSONParser;
-import org.json.simple.parser.ParseException;
-
-import netscape.javascript.JSObject;
-
 import java.time.*;
-import java.time.ZonedDateTime;
-import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
-
+import java.time.ZoneId;
+import java.util.*;
 import javax.net.ssl.*;
 import java.security.KeyStore;
-import java.io.FileInputStream;
-
+import org.json.simple.JSONObject;
+import org.json.simple.parser.JSONParser;
 
 public class ChatServer {
 
-	protected int serverPort = 1234;
-	//protected List<Socket> clients = new ArrayList<Socket>(); // list of clients
-	protected HashMap<String, Socket> clients = new HashMap<>();
-	public static void main(String[] args) throws Exception {
-		new ChatServer();
-	}
-
-	public ChatServer() {
-		ServerSocket serverSocket = null;		
-
-		// create socket
-		try {
-			serverSocket = new ServerSocket(this.serverPort); // create the ServerSocket
-		} catch (Exception e) {
-			System.err.println("[system] could not create socket on port " + this.serverPort);
-			e.printStackTrace(System.err);
-			System.exit(1);
-		}
-
-		// start listening for new connections
-		System.out.println("[system] listening ...");
-		
-		try {
-			while (true) {
-				JSONParser parser = new JSONParser();
-				Socket newClientSocket = serverSocket.accept(); // wait for a new client connection
-				DataInputStream input = new DataInputStream(newClientSocket.getInputStream());
-				String registerMessage = input.readUTF();
-				JSONObject temp = (JSONObject) parser.parse(registerMessage);
-				String usernameToAdd = (String) temp.get("sender");
-				synchronized(this) {
-					boolean alreadyTaken = false;
-					Set userNames = this.clients.keySet();
-					Iterator usernamesIterator = userNames.iterator();
-					while(usernamesIterator.hasNext()){
-						if(usernameToAdd.equals(usernamesIterator.next()) || usernameToAdd.equals("all")){ 
-							alreadyTaken = true;
-							break;
-						}
-					}
-					if(!alreadyTaken){	
-						clients.put(usernameToAdd, newClientSocket);
-						System.out.println("[system] Client "+usernameToAdd+" has successfully connected to the chat server!");
-						alertAll(usernameToAdd);
-						ChatServerConnector conn = new ChatServerConnector(this, newClientSocket); 
-						conn.start(); 
-					}else{
-						JSONObject dupeUser = new JSONObject();
-						dupeUser.put("type", "error");
-						dupeUser.put("sender", "server");
-						dupeUser.put("targetUser", "naj bi bil "+usernameToAdd);
-						dupeUser.put("content", "Uporabnisko ime "+usernameToAdd+" je zasedeno ali ni dovoljeno !");
-						dupeUser.put("cas", ZonedDateTime.now(ZoneId.of("Europe/Ljubljana")).format(DateTimeFormatter.ISO_OFFSET_DATE_TIME));
-						try{
-							DataOutputStream out = new DataOutputStream(newClientSocket.getOutputStream());
-							out.writeUTF(dupeUser.toJSONString());
-						}catch(IOException e){
-							e.printStackTrace();
-						}
-						finally{			 //v primeru dupliciranega up. imena moramo vedno zapreti socket
-							try{
-								newClientSocket.close();
-
-							}catch(Exception e){}
-						}
-					}
-				}
-				
-			}
-		} catch (Exception e) {
-			System.err.println("[error] Accept failed.");
-			e.printStackTrace(System.err);
-			System.exit(1);
-		}
-
-		// close socket
-		System.out.println("[system] closing server socket ...");
-		try {
-			serverSocket.close();
-		} catch (IOException e) {
-			e.printStackTrace(System.err);
-			System.exit(1);
-		}
-	}
-
-	// send a message to all clients connected to the server
-	public void sendToAllClients(String message) throws Exception {
-		/*Iterator<Socket> i = clients.iterator();
-		while (i.hasNext()) { // iterate through the client list
-			Socket socket = (Socket) i.next(); // get the socket for communicating with this client
-			try {
-				DataOutputStream out = new DataOutputStream(socket.getOutputStream()); // create output stream for sending messages to the client
-				out.writeUTF(message); // send message to the client
-			} catch (Exception e) {	
-				System.err.println("[system] could not send message to a client");
-				e.printStackTrace(System.err);
-			}
-		}
-*/
-		for(Socket value : clients.values()){
-			Socket socket = (Socket) value;
-			try {
-				DataOutputStream out = new DataOutputStream(socket.getOutputStream()); 
-				out.writeUTF(message); 
-			} catch (Exception e) {	
-				System.err.println("[system] could not send message to a client");
-				e.printStackTrace(System.err);
-			}
-		}
-	}
-
-	public void sendToPrivateClient(String message) throws Exception {	
-		try {
-			JSONParser parser = new JSONParser();
-			JSONObject temp = (JSONObject) parser.parse(message);
-			String targetUser = (String) temp.get("targetUser");
-			Socket socket = clients.get(targetUser);
-			DataOutputStream out = new DataOutputStream(socket.getOutputStream());
-			out.writeUTF(message);
-		}
-		catch(NullPointerException a){
-			JSONParser parser = new JSONParser();
-			JSONObject temp = (JSONObject) parser.parse(message);
-			String targetUser = (String) temp.get("sender");
-			sendError(targetUser);
-		}
-		catch (Exception e) {	
-			System.err.println("[system] could not send message to a client");
-			e.printStackTrace(System.err);
-		}
-
-	}
-
-	public void sendError(String userReceiver) throws Exception {	
-		JSONObject temp = new JSONObject();
-		temp.put("type", "error");
-		temp.put("sender", "server");
-		temp.put("targetUser", userReceiver);
-		temp.put("content", "Napaka: Uporabik ne obstaja!");
-		temp.put("cas", ZonedDateTime.now(ZoneId.of("Europe/Ljubljana")).format(DateTimeFormatter.ISO_OFFSET_DATE_TIME));
-
-		String message = temp.toJSONString();
-
-		Socket socket = clients.get(userReceiver);
-		DataOutputStream out = new DataOutputStream(socket.getOutputStream()); 
-		out.writeUTF(message); 
-
-	}
-
-	public void sendListOfClients(String message) throws Exception {
-			JSONParser parser = new JSONParser();
-			JSONObject temp = (JSONObject) parser.parse(message);
-			String targetUser = (String) temp.get("targetUser");
-			Socket socket = clients.get(targetUser);
-			DataOutputStream out = new DataOutputStream(socket.getOutputStream()); // create output stream for sending messages to the client
-			
-			JSONObject outMsg = new JSONObject();
-
-			String vsiUporabiki = "";
-
-			Set mnozica = clients.keySet();
-
-			Iterator it = mnozica.iterator();
-
-			boolean isFirst = true;
-
-			while(it.hasNext()) {
-				if(isFirst){
-					vsiUporabiki = it.next().toString();
-					isFirst = false;
-				}
-				else
-					vsiUporabiki = vsiUporabiki +" "+ it.next();
-			}
-
-			outMsg.put("type", "listClients");
-			outMsg.put("sender", "server");
-			outMsg.put("targetUser", targetUser);
-			outMsg.put("content", vsiUporabiki);
-			outMsg.put("cas", ZonedDateTime.now(ZoneId.of("Europe/Ljubljana")).format(DateTimeFormatter.ISO_OFFSET_DATE_TIME));
-			
-			out.writeUTF(outMsg.toJSONString()); // send message to the client
-
-	}
-
-	public void alertAll(String username) throws Exception {
-		JSONObject alert = new JSONObject();
-		alert.put("type", "alert");
-		alert.put("sender", "server");
-		alert.put("targetUser", "all");
-		alert.put("content", "Uporabik "+username+" se je pridruzil klepetu!");
-		alert.put("cas", ZonedDateTime.now(ZoneId.of("Europe/Ljubljana")).format(DateTimeFormatter.ISO_OFFSET_DATE_TIME));
-		sendToAllClients(alert.toJSONString());
-	}
-
-	public void removeClient(Socket socket){ //metodo sem razdelil v dva dela zaradi "ConcurrentModificationException"
-		synchronized(this) {
-			
-			var pari = clients.entrySet();
-			String userToRemove = null;
-			for(var par : pari){
-				if(par.getValue() == socket){
-					userToRemove = (String) par.getKey();
-					break;
-				}
-			}
-
-			if(userToRemove != null){
-				clients.remove(userToRemove);
-				System.out.println("[system] Client "+userToRemove+" has been removed");
-				JSONObject removedClientAlert = new JSONObject();
-				removedClientAlert.put("type", "removedClient");
-				removedClientAlert.put("sender", "server");
-				removedClientAlert.put("targetUser", "all");
-				removedClientAlert.put("content", "Uporabnik "+userToRemove+" je zapustil klepet!");
-				removedClientAlert.put("cas", ZonedDateTime.now(ZoneId.of("Europe/Ljubljana")).format(DateTimeFormatter.ISO_OFFSET_DATE_TIME));
-				try{
-					sendToAllClients(removedClientAlert.toJSONString());
-				}catch(Exception e){
-					e.printStackTrace();
-				}
-			}
-		}
-	}
-	
-}
-
-class ChatServerConnector extends Thread {
-	private ChatServer server;
-	private Socket socket;
-
-	public ChatServerConnector(ChatServer server, Socket socket) {
-		this.server = server;
-		this.socket = socket;
-	}
-
-	public void run() {
-		System.out.println("[system] connected with " + this.socket.getInetAddress().getHostName() + ":" + this.socket.getPort());
-		System.out.println();
-
-		DataInputStream in;
-		try {
-			in = new DataInputStream(this.socket.getInputStream()); // create input stream for listening for incoming messages
-		} catch (IOException e) {
-			System.err.println("[system] could not open input stream!");
-			e.printStackTrace(System.err);
-			this.server.removeClient(socket);
-			return;
-		}
-
-		while (true) { // infinite loop in which this thread waits for incoming messages and processes them
-			String msg_received;
-			try {
-				msg_received = in.readUTF(); // read the message from the client
-
-			} catch (Exception e) {
-				System.err.println("[system] there was a problem while reading message client on port " + this.socket.getPort() + ", removing client");
-				e.printStackTrace(System.err);
-				this.server.removeClient(this.socket);
-				return;
-			}
-
-			if (msg_received.length() == 0) 
-				continue;
+    private final int serverPort = 1234;
+    // zdaj hranimo SSLSocket-e, spremeniti sem moral vse HashMap entry-e
+    private final Map<String, DataOutputStream> clientOutputs = new HashMap<>();
 
 
 
-				 JSONParser parser = new JSONParser();
-					JSONObject temp;
-					try {
-						temp = (JSONObject) parser.parse(msg_received);
-					} catch (Exception e) {
-						continue;
-					}
-				
-				
-				String type = (String) temp.get("type");  //brez object castinga error!! kljuci so stringi
-				String sender = (String) temp.get("sender");
-				String targetUser = (String) temp.get("targetUser");
-				String content = (String) temp.get("content");
-				String time = (String) temp.get("cas");
+    public static void main(String[] args) throws Exception {
+        new ChatServer().start();
+    }
 
-				if(type.equals("public")) System.out.println("Tip sporocila: Javno");
+    public void start() throws Exception {
 
-				if(type.equals("private")) System.out.println("Tip sporocila: Privatno");
+        KeyStore clientTs = KeyStore.getInstance("JKS");
+        clientTs.load(new FileInputStream("client.public"), "public".toCharArray());
+        TrustManagerFactory tmf = TrustManagerFactory.getInstance("SunX509");
+        tmf.init(clientTs);
 
-				if(type.equals("error")) System.out.println("Tip sporocila: Napaka");
 
-				if(type.equals("listClients")) System.out.println("Tip sporocila: Vsi aktivni uporabiki");
+        KeyStore serverKs = KeyStore.getInstance("PKCS12");
+        serverKs.load(new FileInputStream("server.private"), "serverpwd".toCharArray());
+        KeyManagerFactory kmf = KeyManagerFactory.getInstance("SunX509");
+        kmf.init(serverKs, "serverpwd".toCharArray());
 
-				System.out.println("Posiljatelj: "+sender);
-				
-				System.out.println("Prejemnik: "+targetUser);
 
-				System.out.println("cas: "+time);
+        SSLContext sslCtx = SSLContext.getInstance("TLSv1.2");
+        sslCtx.init(kmf.getKeyManagers(), tmf.getTrustManagers(), null);
 
-				System.out.println("Vsebina:\n"+content);
 
-				System.out.println();
+        SSLServerSocketFactory ssf = sslCtx.getServerSocketFactory();
+        SSLServerSocket serverSocket = (SSLServerSocket) ssf.createServerSocket(serverPort);
+        serverSocket.setNeedClientAuth(true);
+        serverSocket.setEnabledProtocols(new String[] { "TLSv1.2" });
+        serverSocket.setEnabledCipherSuites(new String[] {
+            "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"
+        });
 
-				String msg_send = msg_received;
-		
-			try {
+        System.out.println("[system] listening...");
 
-				if(type.equals("public"))
-					this.server.sendToAllClients(msg_send);
 
-				else if(type.equals("private"))
-					this.server.sendToPrivateClient(msg_send);	//dodaj private message metodo
-				
-				else if(type.equals("listClients"))
-					this.server.sendListOfClients(msg_send);
-				else if(type.equals("IamLeaving")){
-					this.server.removeClient(this.socket);
-					try{
-						socket.close();
-					}catch (IOException e){
-						e.printStackTrace();
-					}
-					return;
-				}
+        while (true) {
+            SSLSocket clientSocket = (SSLSocket) serverSocket.accept();
+            clientSocket.startHandshake();
 
-			} catch (Exception e) {
-				System.err.println("[system] there was a problem while sending the message");
-				e.printStackTrace(System.err);
-				continue;
-			}
-		}
-	}
+           // za pridobitev Common name
+            String dn = clientSocket.getSession()
+                                    .getPeerPrincipal()
+                                    .getName();
+            String username = dn.split(",")[0].substring(3);
+            DataOutputStream out = new DataOutputStream(clientSocket.getOutputStream());
+
+            synchronized (this) {
+                if (clientOutputs.containsKey(username) || "all".equalsIgnoreCase(username)) {
+
+                    JSONObject dupe = new JSONObject();
+                    dupe.put("type", "error");
+                    dupe.put("sender", "server");
+                    dupe.put("content", "Uporabniško ime '" + username + "' ni na voljo!");
+                    dupe.put("cas", ZonedDateTime.now(ZoneId.of("Europe/Ljubljana"))
+                                              .format(DateTimeFormatter.ISO_OFFSET_DATE_TIME));
+
+                        out.writeUTF(dupe.toJSONString());
+
+                    clientSocket.close();
+                } else {
+                    clientOutputs.put(username, out);
+                    System.out.println("[system] Client " + username + " connected via TLS");
+                    alertAll(username);
+                    new ChatServerConnector(this, clientSocket, username).start();
+                }
+            }
+        }
+    }
+
+    // Broadcast to all
+    public void sendToAllClients(String message) {
+      for (DataOutputStream out : clientOutputs.values()) {
+        try {
+          out.writeUTF(message);
+          out.flush();
+        } catch (IOException e) {
+          System.err.println("[system] could not send to one client, removing…");
+
+        }
+      }
+    }
+
+
+
+   public void sendToPrivateClient(String message) throws Exception {
+       JSONObject temp = (JSONObject) new JSONParser().parse(message);
+       String target = (String) temp.get("targetUser");
+       DataOutputStream out = clientOutputs.get(target);
+
+       if (out != null) {
+           out.writeUTF(message);
+           out.flush();
+       } else {
+           //ni tega userja
+           sendError((String) temp.get("sender"));
+       }
+   }
+
+
+    public void sendError(String user) throws Exception {
+        JSONObject err = new JSONObject();
+        err.put("type", "error");
+        err.put("sender", "server");
+        err.put("targetUser", user);
+        err.put("content", "Napaka: uporabnik ne obstaja!");
+        err.put("cas", ZonedDateTime.now(ZoneId.of("Europe/Ljubljana"))
+                                  .format(DateTimeFormatter.ISO_OFFSET_DATE_TIME));
+
+        DataOutputStream out = clientOutputs.get(user);
+        if (out != null) {
+            out.writeUTF(err.toJSONString());
+            out.flush();
+        }
+
+    }
+
+
+    public void sendListOfClients(String requestMsg) throws Exception {
+        JSONObject req = (JSONObject) new JSONParser().parse(requestMsg);
+        String target = (String) req.get("targetUser");
+
+
+        StringBuilder list = new StringBuilder();
+        for (String user : clientOutputs.keySet()) {
+            if (list.length() > 0) list.append(' ');
+            list.append(user);
+        }
+
+        JSONObject resp = new JSONObject();
+        resp.put("type", "listClients");
+        resp.put("sender", "server");
+        resp.put("targetUser", target);
+        resp.put("content", list.toString());
+        resp.put("cas", ZonedDateTime.now(ZoneId.of("Europe/Ljubljana"))
+                                   .format(DateTimeFormatter.ISO_OFFSET_DATE_TIME));
+
+        DataOutputStream out = clientOutputs.get(target);
+        if (out != null) {
+            out.writeUTF(resp.toJSONString());
+            out.flush();
+        }
+    }
+
+
+    public void alertAll(String username) {
+        JSONObject alert = new JSONObject();
+        alert.put("type", "alert");
+        alert.put("sender", "server");
+        alert.put("targetUser", "all");
+        alert.put("content", "Uporabnik " + username + " se je pridružil klepetu!");
+        alert.put("cas", ZonedDateTime.now(ZoneId.of("Europe/Ljubljana"))
+                                    .format(DateTimeFormatter.ISO_OFFSET_DATE_TIME));
+        sendToAllClients(alert.toJSONString());
+    }
+
+   public synchronized void removeClient(String user) {
+
+       DataOutputStream out = clientOutputs.remove(user);
+       if (out != null) {
+           try { out.close(); }
+           catch(IOException ignored) { }
+       }
+
+       System.out.println("[system] Client " + user + " has been removed");
+       JSONObject note = new JSONObject();
+       note.put("type", "removedClient");
+       note.put("sender", "server");
+       note.put("targetUser", "all");
+       note.put("content", "Uporabnik " + user + " je zapustil klepet!");
+       note.put("cas", ZonedDateTime.now(ZoneId.of("Europe/Ljubljana"))
+                                  .format(DateTimeFormatter.ISO_OFFSET_DATE_TIME));
+       sendToAllClients(note.toJSONString());
+   }
+
+    class ChatServerConnector extends Thread {
+        private ChatServer server;
+        private SSLSocket socket;
+        private String username;
+
+        public ChatServerConnector(ChatServer server, SSLSocket socket, String username) {
+            this.server = server;
+            this.socket = socket;
+            this.username = username;
+        }
+
+        @Override
+        public void run() {
+            System.out.println("[system] connected with "
+                + socket.getInetAddress().getHostName()
+                + ":" + socket.getPort() + " as " + username);
+            System.out.println();
+
+            DataInputStream in;
+            try {
+                in = new DataInputStream(this.socket.getInputStream());
+            } catch (IOException e) {
+                System.err.println("[system] could not open input stream!");
+                e.printStackTrace(System.err);
+                this.server.removeClient(username);
+                return;
+            }
+
+            while (true) {
+                String msg_received;
+                try {
+                    msg_received = in.readUTF();
+                } catch (Exception e) {
+                    System.err.println("[system] error reading from client " + username + ", removing client");
+                    e.printStackTrace(System.err);
+                    this.server.removeClient(username);
+                    return;
+                }
+
+                if (msg_received.length() == 0) {
+                    continue;
+                }
+
+                JSONParser parser = new JSONParser();
+                JSONObject temp;
+                try {
+                    temp = (JSONObject) parser.parse(msg_received);
+                } catch (Exception e) {
+                    // neveljavno sporočilo, ignoriramo
+                    continue;
+                }
+
+                String type = (String) temp.get("type");
+                String sender = (String) temp.get("sender");
+                String targetUser = (String) temp.get("targetUser");
+                String content = (String) temp.get("content");
+                String time = (String) temp.get("cas");
+
+                if (type.equals("public")) {
+                    System.out.println("Tip sporocila: Javno");
+                } else if (type.equals("private")) {
+                    System.out.println("Tip sporocila: Privatno");
+                } else if (type.equals("error")) {
+                    System.out.println("Tip sporocila: Napaka");
+                } else if (type.equals("listClients")) {
+                    System.out.println("Tip sporocila: Vsi aktivni uporabiki");
+                }
+
+                System.out.println("Posiljatelj: " + sender);
+                System.out.println("Prejemnik: " + targetUser);
+                System.out.println("cas: " + time);
+                System.out.println("Vsebina:\n" + content);
+                System.out.println();
+
+                String msg_send = msg_received;
+
+                try {
+                    if (type.equals("public")) {
+                        this.server.sendToAllClients(msg_send);
+                    } else if (type.equals("private")) {
+                        this.server.sendToPrivateClient(msg_send);
+                    } else if (type.equals("listClients")) {
+                        this.server.sendListOfClients(msg_send);
+                    } else if (type.equals("IamLeaving")) {
+                        this.server.removeClient(sender);
+                        try {
+                            socket.close();
+                        } catch (IOException e) {
+                            e.printStackTrace();
+                        }
+                        return;
+                    }
+                } catch (Exception e) {
+                    System.err.println("[system] problem while sending the message");
+                    e.printStackTrace(System.err);
+                    // nadaljuj
+                }
+            }
+        }
+    }
 }
