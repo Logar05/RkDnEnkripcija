@@ -12,6 +12,9 @@ import java.time.ZonedDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 
+import javax.net.ssl.*;
+import java.security.KeyStore;
+import java.io.FileInputStream;
 
 
 public class ChatServer {
@@ -78,7 +81,7 @@ public class ChatServer {
 						finally{			 //v primeru dupliciranega up. imena moramo vedno zapreti socket
 							try{
 								newClientSocket.close();
-								//lesgo
+
 							}catch(Exception e){}
 						}
 					}

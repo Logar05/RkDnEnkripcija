@@ -9,6 +9,10 @@ import java.time.ZonedDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 
+import javax.net.ssl.*;
+import java.security.KeyStore;
+import java.io.FileInputStream;
+
 public class ChatClient extends Thread
 {
 	protected int serverPort = 1234;
