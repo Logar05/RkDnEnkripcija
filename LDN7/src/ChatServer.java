@@ -11,7 +11,7 @@ import org.json.simple.parser.JSONParser;
 public class ChatServer {
 
     private final int serverPort = 1234;
-    // zdaj hranimo SSLSocket-e, spremeniti sem moral vse HashMap entry-e
+    // Namesto SSL socketou hranim streame
     private final Map<String, DataOutputStream> clientOutputs = new HashMap<>();
 
 

@@ -22,12 +22,12 @@ public class ChatClient extends Thread
 	}
 
 	public ChatClient() throws Exception {
-        // 1) Prebereš ime
+
         BufferedReader std_in = new BufferedReader(new InputStreamReader(System.in));
         System.out.print("Vnesi svoje ime: ");
         String name = std_in.readLine();
 
-        // 2) TLS CONNECT (vrstice združene, brez dodatnega try)
+
         KeyStore serverTs = KeyStore.getInstance("JKS");
         serverTs.load(new FileInputStream("server.public"), "public".toCharArray());
         TrustManagerFactory tmf = TrustManagerFactory.getInstance("SunX509");
@@ -52,11 +52,11 @@ public class ChatClient extends Thread
         System.out.println("[system] connected via TLS as " + name);
         System.out.println();
 
-        // 3) Pripravi tokove **tukaj** – zdaj imamo sslSocket
+
         DataInputStream in = new DataInputStream(sslSocket.getInputStream());
         DataOutputStream out = new DataOutputStream(sslSocket.getOutputStream());
 
-        // 4) Zaženi receiver in poslji sporočila
+
         ChatClientMessageReceiver message_receiver = new ChatClientMessageReceiver(in);
         message_receiver.start();
 
